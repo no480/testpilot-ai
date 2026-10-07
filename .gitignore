@@ -1,0 +1,31 @@
+node_modules/
+apps/*/node_modules/
+dist/
+.vite/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+
+# Kilo Code agent worktrees (must never be committed)
+.kilo/worktrees/
+
+# Test/runtime artifacts
+allure-results/
+allure-report/
+allure-report.html
+playwright-report/
+test-results/
+coverage/
+
+# Generated test case runtime artifacts (keeps .spec.ts files)
+apps/server/generated-tests/**/allure-results/
+apps/server/generated-tests/**/allure-report/
+apps/server/generated-tests/**/allure-report.html
+apps/server/generated-tests/**/execution-summary.txt
+apps/server/generated-tests/**/*.zip
+apps/server/generated-tests/**/*.png
+apps/server/generated-tests/**/*.webm
+apps/server/generated-tests/**/behaviors.json
+apps/server/generated-tests/**/behaviors.csv

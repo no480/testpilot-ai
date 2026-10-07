@@ -1,0 +1,66 @@
+<!doctype html>
+  <html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Execution Report</title>
+    <style>
+      body{font-family:Inter,Arial,Helvetica,sans-serif;background:#07131f;color:#eaf6ff;padding:24px}
+      .card{background:#07202a;border-radius:12px;padding:18px;border:1px solid rgba(125,170,255,0.12)}
+      h1{margin:0 0 8px}
+      .summary{display:flex;gap:1rem;align-items:center;margin-bottom:12px}
+      .badge{padding:8px 12px;border-radius:999px;background:rgba(255,255,255,0.03);font-weight:700}
+      table{width:100%;border-collapse:collapse;margin-top:12px}
+      th,td{padding:10px;border-bottom:1px solid rgba(255,255,255,0.03);text-align:left}
+      th{color:#9fd1ff}
+      .status-pass{color:#6ef0b6;font-weight:700}
+      .status-fail{color:#ff9aa2;font-weight:700}
+      .status-skip{color:#d6d9ff;font-weight:700}
+      .small{font-size:0.85rem;color:#cfe9ff}
+      .right{margin-left:auto}
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Execution Report</h1>
+      <div class="summary">
+        <div class="badge">Total: 1</div>
+        <div class="badge">Passed: 0</div>
+        <div class="badge">Failed: 0</div>
+        <div class="badge">Skipped: 1</div>
+        <div class="badge right">Accuracy: 0%</div>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Test</th>
+            <th>Title</th>
+            <th>Status</th>
+            <th>Browser</th>
+            <th>Duration</th>
+            <th>Start</th>
+            <th>Expected</th>
+            <th>Actual</th>
+            <th>Attachment</th>
+          </tr>
+        </thead>
+        <tbody>
+        
+          <tr>
+            <td class="small">WIN / N/A</td>
+            <td>No test cases generated yet</td>
+            <td class="status-skip">Skipped</td>
+            <td>Chromium</td>
+            <td>0 ms</td>
+            <td class="small">4/10/2026, 9:49:29 am</td>
+            <td>No expected result defined</td>
+            <td>No actual result available</td>
+            <td><a href="attachment-001.txt" target="_blank">attachment-001.txt</a></td>
+          </tr>
+        
+        </tbody>
+      </table>
+    </div>
+  </body>
+  </html>

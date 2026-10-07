@@ -1,0 +1,34 @@
+{
+  "name": "@testpilot-ai/server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test:allure": "playwright test --config playwright.config.ts",
+    "test:headed": "playwright test --config playwright.config.ts --headed",
+    "allure:generate": "allure generate allure-results --clean -o allure-report",
+    "allure:open": "allure open allure-report"
+  },
+  "dependencies": {
+    "@playwright/test": "^1.63.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "openai": "^4.71.1",
+    "playwright": "^1.48.2",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.5",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.8.1",
+    "allure-commandline": "^2.46.1",
+    "allure-js-commons": "^2.15.1",
+    "allure-playwright": "^2.15.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

@@ -1,0 +1,29 @@
+[
+  {
+    "uuid": "b30a33dd-1b13-4c6b-9bbd-2bdc9f97e8c1",
+    "status": "skipped",
+    "name": "No test cases generated yet",
+    "fullName": "WIN / N/A",
+    "visible": true,
+    "labels": [
+      { "name": "story", "value": "WIN" },
+      { "name": "feature", "value": "N/A" },
+      { "name": "browser", "value": "Chromium" },
+      { "name": "status", "value": "Not run" },
+      { "name": "severity", "value": "normal" }
+    ],
+    "time": { "start": 1791087569716, "stop": 1791087569716, "duration": 0 },
+    "steps": [
+      {
+        "name": "No steps recorded",
+        "status": "skipped",
+        "stage": "finished",
+        "attachments": [ { "name": "output.txt", "source": "attachment-001.txt", "type": "text/plain" } ]
+      }
+    ],
+    "attachments": [
+      { "name": "execution-output.txt", "source": "attachment-001.txt", "type": "text/plain", "body": "No execution output available yet." }
+    ],
+    "description": "Expected: No expected result defined\nActual: No actual result available\nTest data: No test data used"
+  }
+]

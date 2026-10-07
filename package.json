@@ -1,0 +1,19 @@
+{
+  "name": "testpilot-ai",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace apps/web",
+    "dev:server": "npm run dev --workspace apps/server",
+    "build:web": "npm run build --workspace apps/web",
+    "build:server": "npm run build --workspace apps/server",
+    "build": "npm run build:web && npm run build:server",
+    "dev": "npm-run-all -p dev:web dev:server"
+  },
+  "devDependencies": {
+    "npm-run-all": "^4.1.1"
+  }
+}

@@ -1,0 +1,68 @@
+import { test, expect } from '@playwright/test';
+import { allure } from 'allure-playwright';
+
+const projectName = "Win";
+const testData = {"username":"Admin","password":"admin123"};
+const baseUrl = process.env.BASE_URL ?? 'https://opensource-demo.orangehrmlive.com/web/index.php/auth/login';
+
+test.use({
+  headless: false,
+  screenshot: 'only-on-failure',
+  video: 'retain-on-failure',
+  trace: 'retain-on-failure'
+});
+
+test('TC_LOGIN_001 - Successful Login with Valid Credentials', async ({ page }, testInfo) => {
+  await allure.epic('QA Automation');
+  await allure.feature(projectName);
+  await allure.story('Successful Login with Valid Credentials');
+  await allure.severity('normal');
+  await allure.tag('Functional');
+  await allure.tag('TC_LOGIN_001');
+
+  test.info().annotations.push({
+    type: 'sourceTestCaseId',
+    description: 'TC_LOGIN_001'
+  });
+
+  const captureFailureScreenshot = async (label: string) => {
+    const screenshotPath = testInfo.outputPath(`${label}.png`);
+    await page.screenshot({ path: screenshotPath, fullPage: true });
+    await testInfo.attach(label, { path: screenshotPath, contentType: 'image/png' });
+  };
+
+  try {
+    await allure.step('Open application', async () => {
+      await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
+    });
+
+    await allure.step('Validate page is loaded', async () => {
+      await expect(page).toHaveURL(/.+/);
+    });
+
+  const usernameField = page.locator('input[name="username"], input[name="txtUsername"], input[placeholder*="Username" i], input[type="text"]').first();
+  const passwordField = page.locator('input[name="password"], input[placeholder*="Password" i], input[type="password"]').first();
+  const submitButton = page.locator('button:has-text("Login"), button:has-text("Sign in"), button[type="submit"], input[type="submit"]').first();
+
+    await allure.step('Fill in login credentials', async () => {
+      await usernameField.fill(testData.username);
+      await passwordField.fill(testData.password);
+    });
+
+    await allure.step('Submit the login form', async () => {
+      await submitButton.click();
+    });
+
+    await allure.step('Verify dashboard is visible', async () => {
+      const successIndicator = page.locator('body').locator('h1, h2, h6, span').filter({ hasText: /dashboard|welcome|home|profile/i }).first();
+      await expect(successIndicator).toBeVisible({ timeout: 15000 });
+    });
+
+    // Source requirement: User can complete the primary workflow
+    // Scenario: Verify that a user can successfully log in using valid username and password credentials on the OrangeHRM login page.
+    // Expected result: User is authenticated successfully and redirected to the dashboard page.
+  } catch (error) {
+    await captureFailureScreenshot('failure-screenshot');
+    throw error;
+  }
+});
