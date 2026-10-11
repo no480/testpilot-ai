@@ -1,10 +1,11 @@
 services:
   - type: web
+    runtime: node
     name: testpilot-ai-api
-    env: node
     plan: free
     buildCommand: npm ci --include=dev && npx playwright install --with-deps chromium || npx playwright install chromium; npm run build:server
     startCommand: npm run start
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production
@@ -21,10 +22,9 @@ services:
       - key: NODE_VERSION
         value: "20"
 
-  - type: static
+  - type: web
+    runtime: static
     name: testpilot-ai-web
-    env: static
-    plan: free
     buildCommand: npm ci --include=dev && npm run build:web
     staticPublishPath: apps/web/dist
     envVars:
