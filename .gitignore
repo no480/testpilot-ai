@@ -19,6 +19,10 @@ playwright-report/
 test-results/
 coverage/
 
+# Runtime app state written by the server (settings.json can hold API keys - never commit)
+apps/server/data/settings.json
+apps/server/data/projects.json
+
 # Generated test case runtime artifacts (keeps .spec.ts files)
 apps/server/generated-tests/**/allure-results/
 apps/server/generated-tests/**/allure-report/

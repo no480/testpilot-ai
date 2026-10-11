@@ -11,7 +11,8 @@
     "build:web": "npm run build --workspace apps/web",
     "build:server": "npm run build --workspace apps/server",
     "build": "npm run build:web && npm run build:server",
-    "dev": "npm-run-all -p dev:web dev:server"
+    "dev": "npm-run-all -p dev:web dev:server",
+    "start": "npm run start --workspace apps/server"
   },
   "devDependencies": {
     "npm-run-all": "^4.1.1"

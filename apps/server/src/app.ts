@@ -217,7 +217,32 @@ const updateExecutionJob = (projectId: string, updater: (job: ExecutionJob) => E
   executionJobs.set(projectId, updater(current));
 };
 
-app.use(cors());
+app.use(cors({
+  origin: function (origin, callback) {
+    const allowedOrigins = [
+      'http://localhost:5173',
+      'http://localhost:4173',
+      'http://127.0.0.1:5173',
+      'http://127.0.0.1:4173'
+    ];
+
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    const allowedPattern = /^https:\/\/.*\.onrender\.com$/;
+    if (allowedPattern.test(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(null, false);
+  },
+  credentials: false
+}));
 app.use(express.json());
 
 app.get('/api/health', (_req, res) => {
@@ -710,6 +735,13 @@ app.post('/api/projects/:projectId/run-tests', async (req, res) => {
     return;
   }
 
+  if (process.env.ENABLE_TEST_EXECUTION === 'false') {
+    res.status(403).json({
+      error: 'Test execution is disabled on this deployment. Set ENABLE_TEST_EXECUTION=true in the backend environment to allow it.'
+    });
+    return;
+  }
+
   const job = createExecutionJob(project);
   executionJobs.set(project.id, job);
 
@@ -729,7 +761,21 @@ app.post('/api/projects/:projectId/run-tests', async (req, res) => {
     for (let index = 0; index < project.generatedFiles.length; index += 1) {
       const file = project.generatedFiles[index];
       const fileRelativePath = path.relative(resolveServerDir(), path.join(generatedDir, file.fileName)).split(path.sep).join('/');
-      const fileCommand = `npx playwright test "${fileRelativePath}" --config playwright.config.ts --reporter=line,allure-playwright --workers=1 --headed`;
+
+      if (!/^[A-Za-z0-9._\/-]+$/.test(file.fileName)) {
+        const unsafeMessage = `Skipped ${file.fileName}: file name contains unsupported characters.`;
+        outputChunks.push(`## ${file.fileName}\n${unsafeMessage}`);
+        updateExecutionJob(project.id, (current) => ({
+          ...current,
+          output: outputChunks.join('\n\n'),
+          status: 'failed',
+          items: current.items.map((item) => item.id === file.id ? { ...item, status: 'failed', output: unsafeMessage } : item)
+        }));
+        continue;
+      }
+
+      const headedFlag = process.env.PLAYWRIGHT_HEADLESS === 'true' ? '' : ' --headed';
+      const fileCommand = `npx playwright test "${fileRelativePath}" --config playwright.config.ts --reporter=line,allure-playwright --workers=1${headedFlag}`;
 
       updateExecutionJob(project.id, (current) => ({
         ...current,
@@ -1029,9 +1075,9 @@ export const startServer = async (preferredPort: number = port) => {
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     try {
       await new Promise<void>((resolve, reject) => {
-        const server = app.listen(candidatePort, () => {
+        const server = app.listen(candidatePort, '0.0.0.0', () => {
           httpServer = server;
-          console.log(`TestPilot AI API listening on http://localhost:${candidatePort}`);
+          console.log(`TestPilot AI API listening on port ${candidatePort}`);
           resolve();
         });
 
