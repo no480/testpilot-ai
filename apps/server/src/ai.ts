@@ -1,3 +1,4 @@
+import { chatCompletion, normalizeProvider } from './aiProviders.js';
 import { loadSettings } from './storage.js';
 import {
   generatePlannerTestCases,
@@ -114,12 +115,29 @@ export function parseAIPlannerResponse(content: string): TestCase[] {
   }
 }
 
-export async function generatePlannerTestCasesWithAI(project: PlannerInput): Promise<TestCase[]> {
-  const savedSettings = loadSettings();
-  const apiKey = (process.env.GEMINI_API_KEY || savedSettings.apiKey || '').trim();
-  const model = (process.env.GEMINI_MODEL || savedSettings.model || 'gemini-2.0-flash').trim();
+export type PlannerAIOverride = {
+  provider?: unknown;
+  apiKey?: unknown;
+  model?: unknown;
+  baseUrl?: unknown;
+};
 
-  if (!apiKey) {
+export async function generatePlannerTestCasesWithAI(project: PlannerInput, override?: PlannerAIOverride): Promise<TestCase[]> {
+  const savedSettings = loadSettings();
+  const provider = normalizeProvider(override?.provider ?? savedSettings.provider);
+
+  const requestKey = typeof override?.apiKey === 'string' ? override.apiKey.trim() : '';
+  const apiKey = requestKey || (provider === 'gemini' ? (process.env.GEMINI_API_KEY ?? '').trim() : '');
+
+  const requestModel = typeof override?.model === 'string' ? override.model.trim() : '';
+  const model = provider === 'gemini'
+    ? requestModel || (process.env.GEMINI_MODEL ?? '').trim() || savedSettings.model || 'gemini-2.0-flash'
+    : requestModel || savedSettings.model || '';
+
+  const requestBaseUrl = typeof override?.baseUrl === 'string' ? override.baseUrl.trim() : '';
+  const baseUrl = requestBaseUrl || savedSettings.baseUrl || '';
+
+  if (!apiKey || !model) {
     return generatePlannerTestCases(project);
   }
 
@@ -129,31 +147,16 @@ export async function generatePlannerTestCasesWithAI(project: PlannerInput): Pro
       instruction: 'Generate multiple test cases for each meaningful requirement or scenario visible on the page. Do not collapse the response into a single case. Prefer broader coverage based on the actual URL content.'
     });
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: `You are a QA planning assistant. Generate multiple structured test cases from the user requirements and from the actual application page when an applicationUrl or discoveredPageContent is provided. Return a JSON object with a top-level property named "testCases" whose value is an array of test cases. Include as many realistic scenarios as possible, especially login, validation, navigation, search, reporting, settings, and error flows. Each item must include: testCaseId, title, description, type, priority, preconditions, testData, steps, expectedResult, tags, status, sourceRequirement.\n\n${prompt}` }] }],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          temperature: 0.4
-        }
-      })
+    console.log(`[AI] Planner request provider=${provider} model=${model} source=${requestKey ? 'request' : 'env'}`);
+
+    const content = await chatCompletion({
+      provider,
+      apiKey,
+      model,
+      baseUrl,
+      prompt: `You are a QA planning assistant. Generate multiple structured test cases from the user requirements and from the actual application page when an applicationUrl or discoveredPageContent is provided. Return a JSON object with a top-level property named "testCases" whose value is an array of test cases. Include as many realistic scenarios as possible, especially login, validation, navigation, search, reporting, settings, and error flows. Each item must include: testCaseId, title, description, type, priority, preconditions, testData, steps, expectedResult, tags, status, sourceRequirement.\n\n${prompt}`,
+      jsonMode: true
     });
-
-    if (!response.ok) {
-      return generatePlannerTestCases(project);
-    }
-
-    const data = await response.json() as {
-      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-    };
-
-    const content = data.candidates?.[0]?.content?.parts?.map((part) => part.text ?? '').join('') ?? '';
-
-    if (!content) {
-      return generatePlannerTestCases(project);
-    }
 
     const parsedCases = parseAIPlannerResponse(content);
     if (parsedCases.length === 0) {

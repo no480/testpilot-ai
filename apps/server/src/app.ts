@@ -9,11 +9,22 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 
 import { generatePlannerTestCasesWithAI } from './ai.js';
+import {
+  chatCompletion,
+  DEFAULT_GEMINI_MODELS,
+  DEFAULT_GEMINI_MODEL,
+  listModels,
+  normalizeModel,
+  normalizeProvider,
+  redactSecrets,
+  resolveApiKey,
+  resolveOpenAiBaseUrl
+} from './aiProviders.js';
 import { generatePlaywrightSpec } from './generator.js';
 import { generateHealingSuggestion } from './healer.js';
 import { extractRequirementsFromPageContent, type TestCase } from './planner.js';
 import { generateProjectReport, type ReportRow } from './report.js';
-import { loadProjects, loadSettings, saveProjects, saveSettings, type OpenAIConfig } from './storage.js';
+import { loadProjects, loadSettings, saveProjects, saveSettings, type AIConfig } from './storage.js';
 
 dotenv.config();
 const execAsync = promisify(exec);
@@ -118,63 +129,12 @@ const persistProjects = () => {
   saveProjects(projects);
 };
 
-const DEFAULT_GEMINI_MODEL = 'gemini-2.0-flash';
-
-const normalizeGeminiModel = (value?: string) =>
-  (value ?? '').trim() || DEFAULT_GEMINI_MODEL;
-
 const escapeHtml = (value: string) => String(value ?? '')
   .replace(/&/g, '&amp;')
   .replace(/</g, '&lt;')
   .replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;')
   .replace(/'/g, '&#39;');
-
-const extractGeminiText = (payload: unknown): string => {
-  if (!payload || typeof payload !== 'object') {
-    return '';
-  }
-
-  const candidate = payload as {
-    candidates?: Array<{
-      content?: { parts?: Array<{ text?: string }> };
-    }>;
-  };
-
-  const text = candidate.candidates?.[0]?.content?.parts
-    ?.map((part) => part.text ?? '')
-    .join('') ?? '';
-
-  return text.trim();
-};
-
-const callGemini = async (apiKey: string, model: string, prompt: string, responseJsonMode = false): Promise<string> => {
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${apiKey}`;
-  const body = {
-    contents: [{ parts: [{ text: prompt }] }],
-    ...(responseJsonMode ? { generationConfig: { responseMimeType: 'application/json' } } : {})
-  };
-
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  });
-
-  if (!response.ok) {
-    const responseText = await response.text();
-    throw new Error(responseText || 'Gemini request failed');
-  }
-
-  const data = await response.json();
-  const extracted = extractGeminiText(data);
-
-  if (!extracted) {
-    throw new Error('Gemini returned an empty response.');
-  }
-
-  return extracted;
-};
 
 const updatePlannerProgress = (projectId: string, next: PlanningProgress) => {
   plannerProgressByProject.set(projectId, next);
@@ -188,11 +148,13 @@ const getPlannerProgress = (projectId: string): PlanningProgress =>
     totalCases: 0
   };
 
-const sanitizeSettings = (config: OpenAIConfig) => ({
-  apiKey: '',
+const sanitizeSettings = (config: AIConfig) => ({
+  provider: config.provider,
   model: config.model,
+  baseUrl: config.baseUrl,
   availableModels: config.availableModels,
-  isValid: config.isValid
+  isValid: config.isValid,
+  hasServerKey: config.provider === 'gemini' && Boolean((process.env.GEMINI_API_KEY ?? '').trim())
 });
 
 const createExecutionJob = (project: Project): ExecutionJob => ({
@@ -254,67 +216,117 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
-app.get('/api/config/openai', (_req, res) => {
+const readAIOverride = (value: unknown) => {
+  const body = (value && typeof value === 'object' ? value : {}) as Record<string, unknown>;
+
+  return {
+    provider: typeof body.provider === 'string' ? normalizeProvider(body.provider) : undefined,
+    apiKey: typeof body.apiKey === 'string' ? body.apiKey.slice(0, 512) : '',
+    model: typeof body.model === 'string' ? body.model.slice(0, 200) : '',
+    baseUrl: typeof body.baseUrl === 'string' ? body.baseUrl.slice(0, 512) : ''
+  };
+};
+
+app.get('/api/config/ai', (_req, res) => {
   res.json(sanitizeSettings(loadSettings()));
 });
 
-app.post('/api/config/openai/validate', async (req, res) => {
-  const body = req.body ?? {};
-  const apiKey = String(body.apiKey ?? '').trim();
-  const requestedModel = normalizeGeminiModel(String(body.model ?? ''));
+app.post('/api/config/ai/models', async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const provider = normalizeProvider(body.provider);
+  const requestKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
+  const apiKey = resolveApiKey(provider, requestKey);
 
   if (!apiKey) {
-    res.status(400).json({ error: 'Gemini API key is required.' });
+    res.status(400).json({
+      error: 'An API key is required to list models. Paste your key, or set GEMINI_API_KEY in the server environment to use the Gemini provider without a browser key.'
+    });
     return;
   }
 
-  const defaultModels = ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+  let baseUrl: string | undefined;
+  if (provider === 'openai') {
+    try {
+      baseUrl = await resolveOpenAiBaseUrl(body.baseUrl);
+    } catch (error) {
+      res.status(400).json({ error: redactSecrets(error instanceof Error ? error.message : 'Invalid base URL.', [apiKey]) });
+      return;
+    }
+  }
 
   try {
-    const modelResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
-    let availableModels = [...defaultModels];
+    const models = await listModels(provider, apiKey, baseUrl);
+    res.json({ provider, models, usedServerKey: !requestKey });
+  } catch (error) {
+    res.status(400).json({ error: redactSecrets(error instanceof Error ? error.message : 'Unable to list models.', [apiKey]) });
+  }
+});
 
-    if (modelResponse.ok) {
-      const modelData = await modelResponse.json() as { models?: Array<{ name?: string }> };
-      const discovered = Array.from(new Set(
-        (modelData.models ?? [])
-          .map((model) => model.name ?? '')
-          .map((name) => name.replace(/^models\//, '').trim())
-          .filter((name): name is string => Boolean(name))
-      )).sort();
+app.post('/api/config/ai/validate', async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const provider = normalizeProvider(body.provider);
+  const requestKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
+  const apiKey = resolveApiKey(provider, requestKey);
+  const requestedModel = typeof body.model === 'string' ? body.model.trim() : '';
 
-      if (discovered.length > 0) {
-        availableModels = discovered;
-      }
+  if (!apiKey) {
+    res.status(400).json({ error: 'An API key is required to check the connection.' });
+    return;
+  }
+
+  let baseUrl: string | undefined;
+  if (provider === 'openai') {
+    try {
+      baseUrl = await resolveOpenAiBaseUrl(body.baseUrl);
+    } catch (error) {
+      res.status(400).json({ error: redactSecrets(error instanceof Error ? error.message : 'Invalid base URL.', [apiKey]) });
+      return;
     }
+  }
 
-    const preferredModel = availableModels.includes(requestedModel)
-      ? requestedModel
-      : availableModels.find((model) => model.includes('gemini-2.0-flash') || model.includes('gemini-2.0'))
+  let availableModels: string[] = [];
+  try {
+    availableModels = await listModels(provider, apiKey, baseUrl);
+  } catch {
+    availableModels = provider === 'gemini' ? [...DEFAULT_GEMINI_MODELS] : [];
+  }
+
+  const preferredModel = requestedModel
+    || (provider === 'gemini'
+      ? (availableModels.find((model) => model.includes('gemini-2.0-flash') || model.includes('gemini-2.0'))
         ?? availableModels.find((model) => model.includes('gemini'))
-        ?? DEFAULT_GEMINI_MODEL;
+        ?? DEFAULT_GEMINI_MODEL)
+      : availableModels[0] ?? '');
 
-    const responseText = await callGemini(apiKey, preferredModel, 'Reply with OK');
-    const settings: OpenAIConfig = {
-      apiKey,
+  if (!preferredModel) {
+    res.status(400).json({ error: 'Model discovery returned no models. Enter a model ID manually, then check the connection again.' });
+    return;
+  }
+
+  try {
+    const responseText = await chatCompletion({ provider, apiKey, model: preferredModel, baseUrl, prompt: 'Reply with OK' });
+    const settings: AIConfig = {
+      provider,
       model: preferredModel,
+      baseUrl: baseUrl ?? '',
       availableModels,
-      isValid: Boolean(responseText && responseText.trim().length > 0)
+      isValid: Boolean(responseText && responseText.trim())
     };
 
     saveSettings(settings);
     res.json({
       ...sanitizeSettings(settings),
       isValid: true,
-      message: `Gemini connection successful using ${preferredModel}.`
+      usedServerKey: !requestKey,
+      message: `Connection successful using ${preferredModel}.`
     });
   } catch (error) {
-    const details = error instanceof Error ? error.message : 'Unknown validation error';
-    const fallbackModel = normalizeGeminiModel(requestedModel);
-    const settings: OpenAIConfig = {
-      apiKey,
-      model: fallbackModel,
-      availableModels: defaultModels,
+    const details = redactSecrets(error instanceof Error ? error.message : 'Unknown validation error', [apiKey]);
+    const settings: AIConfig = {
+      provider,
+      model: preferredModel,
+      baseUrl: baseUrl ?? '',
+      availableModels,
       isValid: false
     };
 
@@ -322,20 +334,29 @@ app.post('/api/config/openai/validate', async (req, res) => {
     res.json({
       ...sanitizeSettings(settings),
       isValid: false,
-      message: `Gemini fallback enabled: ${fallbackModel}. The API key may still be invalid or the Gemini endpoint is temporarily unavailable.`,
-      error: `Gemini validation failed: ${details}`
+      usedServerKey: !requestKey,
+      message: `The connection check failed for ${preferredModel}.`,
+      error: details
     });
   }
 });
 
-app.post('/api/config/openai/prompt', async (req, res) => {
-  const body = req.body ?? {};
-  const apiKey = String(body.apiKey ?? '').trim() || loadSettings().apiKey;
-  const model = normalizeGeminiModel(String(body.model ?? '') || loadSettings().model || DEFAULT_GEMINI_MODEL);
-  const prompt = String(body.prompt ?? '').trim();
+app.post('/api/config/ai/prompt', async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const provider = normalizeProvider(body.provider);
+  const requestKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
+  const apiKey = resolveApiKey(provider, requestKey);
+  const requestedModel = typeof body.model === 'string' ? body.model.trim() : '';
+  const model = requestedModel || normalizeModel(loadSettings().model, provider);
+  const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
 
   if (!apiKey) {
-    res.status(400).json({ error: 'Gemini API key is required before sending a prompt.' });
+    res.status(400).json({ error: 'An API key is required before sending a prompt.' });
+    return;
+  }
+
+  if (!model) {
+    res.status(400).json({ error: 'A model is required before sending a prompt. Enter a model ID or load the model list.' });
     return;
   }
 
@@ -344,29 +365,64 @@ app.post('/api/config/openai/prompt', async (req, res) => {
     return;
   }
 
+  let baseUrl: string | undefined;
+  if (provider === 'openai') {
+    try {
+      baseUrl = await resolveOpenAiBaseUrl(body.baseUrl);
+    } catch (error) {
+      res.status(400).json({ error: redactSecrets(error instanceof Error ? error.message : 'Invalid base URL.', [apiKey]) });
+      return;
+    }
+  }
+
   try {
-    const response = await callGemini(apiKey, model, prompt);
-    saveSettings({ apiKey, model, availableModels: loadSettings().availableModels ?? [], isValid: true });
-    res.json({ response, model, ok: true });
+    const response = await chatCompletion({ provider, apiKey, model, baseUrl, prompt });
+    saveSettings({
+      provider,
+      model,
+      baseUrl: baseUrl ?? '',
+      availableModels: loadSettings().availableModels ?? [],
+      isValid: true
+    });
+    res.json({ response, model, provider, ok: true });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unable to complete the prompt.';
-    res.status(400).json({ error: `Gemini prompt failed: ${message}` });
+    const message = redactSecrets(error instanceof Error ? error.message : 'Unable to complete the prompt.', [apiKey]);
+    res.status(400).json({ error: `AI prompt failed: ${message}` });
   }
 });
 
-app.put('/api/config/openai', (req, res) => {
-  const body = req.body ?? {};
-  const apiKey = String(body.apiKey ?? '').trim();
-  const model = normalizeGeminiModel(String(body.model ?? ''));
+app.put('/api/config/ai', async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const provider = normalizeProvider(body.provider);
+  const model = typeof body.model === 'string' ? body.model.trim() : '';
+  const rawBaseUrl = typeof body.baseUrl === 'string' ? body.baseUrl.trim() : '';
 
-  const settings: OpenAIConfig = {
-    apiKey,
+  let baseUrl = '';
+  if (rawBaseUrl) {
+    if (provider !== 'openai') {
+      res.status(400).json({ error: 'A custom base URL is only supported for the OpenAI-compatible provider.' });
+      return;
+    }
+
+    try {
+      baseUrl = await resolveOpenAiBaseUrl(rawBaseUrl);
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid base URL.' });
+      return;
+    }
+  }
+
+  // Note: any apiKey field sent by clients is intentionally ignored and never stored.
+  const settings: AIConfig = {
+    provider,
     model,
+    baseUrl,
     availableModels: Array.isArray(body.availableModels)
       ? body.availableModels.filter((item: unknown): item is string => typeof item === 'string')
       : [],
     isValid: Boolean(body.isValid)
   };
+
   saveSettings(settings);
   res.json(sanitizeSettings(settings));
 });
@@ -538,6 +594,8 @@ app.post('/api/projects/:projectId/plan', async (req, res) => {
     return;
   }
 
+  const aiOverride = readAIOverride(req.body?.aiConfig ?? req.body);
+
   const initialProgress: PlanningProgress = {
     status: 'exploring',
     message: `Opening ${project.applicationUrl} and exploring the app UI...`,
@@ -581,7 +639,7 @@ app.post('/api/projects/:projectId/plan', async (req, res) => {
         applicationUrl: project.applicationUrl,
         requirements,
         discoveredPageContent
-      });
+      }, aiOverride);
 
       const generatedProgress: Array<{ id: string; title: string; status: 'created' | 'pending' }> = [];
 

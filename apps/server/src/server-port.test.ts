@@ -9,7 +9,7 @@ test('startServer retries with the next free port when the default port is busy'
   const blocker = createServer();
 
   await new Promise<void>((resolve) => {
-    blocker.listen(preferredPort, () => resolve());
+    blocker.listen(preferredPort, '0.0.0.0', () => resolve());
   });
 
   const port = await startServer(preferredPort);

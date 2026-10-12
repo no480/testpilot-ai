@@ -87,11 +87,43 @@ type Project = {
   reportPath?: string | null;
 };
 
-type OpenAIConfig = {
+type AIProviderId = 'gemini' | 'openai';
+
+type AIConfig = {
+  provider: AIProviderId;
   apiKey: string;
   model: string;
+  baseUrl: string;
   availableModels: string[];
   isValid: boolean;
+  hasServerKey: boolean;
+};
+
+type ModelsStatus = {
+  state: 'idle' | 'loading' | 'loaded' | 'empty' | 'error';
+  message: string;
+};
+
+const aiKeyStorageId = (provider: AIProviderId) => `testpilot-ai.ai-key.${provider}`;
+
+const readStoredAIKey = (provider: AIProviderId): string => {
+  try {
+    return window.sessionStorage.getItem(aiKeyStorageId(provider)) ?? '';
+  } catch {
+    return '';
+  }
+};
+
+const writeStoredAIKey = (provider: AIProviderId, key: string) => {
+  try {
+    if (key) {
+      window.sessionStorage.setItem(aiKeyStorageId(provider), key);
+    } else {
+      window.sessionStorage.removeItem(aiKeyStorageId(provider));
+    }
+  } catch {
+    // Session storage can be unavailable in restricted contexts; the key still works for this page load.
+  }
 };
 
 type PlanningProgress = {
@@ -133,12 +165,16 @@ export default function App() {
     tone: 'idle' as 'idle' | 'busy' | 'success' | 'error'
   });
   const [actionNote, setActionNote] = useState('Select a project and a testcase to begin. Next: create or plan a test, then generate scripts and run them.');
-  const [openAIConfig, setOpenAIConfig] = useState<OpenAIConfig>({
-    apiKey: '',
+  const [aiConfig, setAIConfig] = useState<AIConfig>({
+    provider: 'gemini',
+    apiKey: readStoredAIKey('gemini'),
     model: 'gemini-2.0-flash',
+    baseUrl: '',
     availableModels: [],
-    isValid: false
+    isValid: false,
+    hasServerKey: false
   });
+  const [modelsStatus, setModelsStatus] = useState<ModelsStatus>({ state: 'idle', message: '' });
   const [error, setError] = useState('');
   const [isBusy, setIsBusy] = useState(false);
   const [isValidatingKey, setIsValidatingKey] = useState(false);
@@ -159,7 +195,7 @@ export default function App() {
 
   useEffect(() => {
     fetchProjects();
-    fetchOpenAIConfig();
+    fetchAIConfig();
   }, []);
 
   useEffect(() => {
@@ -200,22 +236,26 @@ export default function App() {
     loadProjectReport();
   }, [selectedProjectId]);
 
-  const fetchOpenAIConfig = async () => {
+  const fetchAIConfig = async () => {
     try {
-      const response = await fetch(`${API_URL}/config/openai`);
+      const response = await fetch(`${API_URL}/config/ai`);
       const data = await response.json();
+      const provider: AIProviderId = data.provider === 'openai' ? 'openai' : 'gemini';
       const availableModels = Array.isArray(data.availableModels)
         ? data.availableModels.filter((item: unknown): item is string => typeof item === 'string')
         : [];
 
-      setOpenAIConfig({
-        apiKey: typeof data.apiKey === 'string' ? data.apiKey : '',
-        model: typeof data.model === 'string' && data.model ? data.model : availableModels[0] ?? 'gemini-2.0-flash',
+      setAIConfig({
+        provider,
+        apiKey: readStoredAIKey(provider),
+        model: typeof data.model === 'string' && data.model ? data.model : 'gemini-2.0-flash',
+        baseUrl: typeof data.baseUrl === 'string' ? data.baseUrl : '',
         availableModels,
-        isValid: Boolean(data.isValid)
+        isValid: Boolean(data.isValid),
+        hasServerKey: Boolean(data.hasServerKey)
       });
     } catch {
-      setError('Unable to load Gemini settings.');
+      setError('Unable to load AI settings.');
     }
   };
 
@@ -290,7 +330,18 @@ export default function App() {
     });
 
     try {
-      const response = await fetch(`${API_URL}/projects/${selectedProject.id}/plan`, { method: 'POST' });
+      const response = await fetch(`${API_URL}/projects/${selectedProject.id}/plan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          aiConfig: {
+            provider: aiConfig.provider,
+            apiKey: aiConfig.apiKey,
+            model: aiConfig.model.trim(),
+            baseUrl: aiConfig.baseUrl
+          }
+        })
+      });
       const data = await response.json();
 
       if (!response.ok) {
@@ -751,58 +802,118 @@ export default function App() {
     }
   };
 
-  const handleSaveOpenAIConfig = async () => {
-    setIsBusy(true);
-    setError('');
+  const handleProviderChange = (nextProvider: AIProviderId) => {
+    setAIConfig((current) => ({
+      ...current,
+      provider: nextProvider,
+      apiKey: readStoredAIKey(nextProvider)
+    }));
+    setModelsStatus({ state: 'idle', message: '' });
+    setConnectionMessage('');
+  };
+
+  const handleRefreshModels = async () => {
+    setModelsStatus({ state: 'loading', message: 'Loading models from the provider...' });
 
     try {
-      const response = await fetch(`${API_URL}/config/openai`, {
-        method: 'PUT',
+      const response = await fetch(`${API_URL}/config/ai/models`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          apiKey: openAIConfig.apiKey,
-          model: openAIConfig.model.trim() || 'gemini-2.0-flash'
+          provider: aiConfig.provider,
+          apiKey: aiConfig.apiKey,
+          baseUrl: aiConfig.baseUrl
         })
       });
 
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error ?? 'Unable to save Gemini settings');
+        throw new Error(data.error ?? 'Unable to load models.');
       }
 
-      setOpenAIConfig({
-        apiKey: openAIConfig.apiKey,
-        model: typeof data.model === 'string' ? data.model : 'gemini-2.0-flash',
+      const models = Array.isArray(data.models)
+        ? data.models.filter((item: unknown): item is string => typeof item === 'string')
+        : [];
+
+      setAIConfig((current) => ({ ...current, availableModels: models }));
+      setModelsStatus(models.length > 0
+        ? { state: 'loaded', message: `${models.length} models available. Type to filter, or enter any model ID manually.` }
+        : { state: 'empty', message: 'No models were returned. You can still type a model ID manually.' });
+    } catch (err) {
+      setModelsStatus({
+        state: 'error',
+        message: err instanceof Error ? err.message : 'Unable to load models. You can still type a model ID manually.'
+      });
+    }
+  };
+
+  useEffect(() => {
+    if (!aiConfig.apiKey.trim()) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void handleRefreshModels();
+    }, 700);
+
+    return () => window.clearTimeout(timer);
+  }, [aiConfig.provider, aiConfig.apiKey, aiConfig.baseUrl]);
+
+  const handleSaveAIConfig = async () => {
+    setIsBusy(true);
+    setError('');
+
+    try {
+      const response = await fetch(`${API_URL}/config/ai`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: aiConfig.provider,
+          model: aiConfig.model.trim(),
+          baseUrl: aiConfig.baseUrl,
+          availableModels: aiConfig.availableModels,
+          isValid: aiConfig.isValid
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error ?? 'Unable to save AI settings');
+      }
+
+      setAIConfig((current) => ({
+        ...current,
+        model: typeof data.model === 'string' ? data.model : current.model,
+        baseUrl: typeof data.baseUrl === 'string' ? data.baseUrl : current.baseUrl,
         availableModels: Array.isArray(data.availableModels)
           ? data.availableModels.filter((item: unknown): item is string => typeof item === 'string')
-          : [],
-        isValid: Boolean(data.isValid)
-      });
+          : current.availableModels,
+        isValid: Boolean(data.isValid),
+        hasServerKey: Boolean(data.hasServerKey)
+      }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to save Gemini settings');
+      setError(err instanceof Error ? err.message : 'Unable to save AI settings');
     } finally {
       setIsBusy(false);
     }
   };
 
-  const handleValidateOpenAIConfig = async () => {
-    if (!openAIConfig.apiKey.trim()) {
-      setError('Please enter an API key before testing it.');
-      return;
-    }
-
+  const handleValidateAIConfig = async () => {
     setIsValidatingKey(true);
     setError('');
     setConnectionMessage('');
 
     try {
-      const response = await fetch(`${API_URL}/config/openai/validate`, {
+      const response = await fetch(`${API_URL}/config/ai/validate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          apiKey: openAIConfig.apiKey,
-          model: openAIConfig.model.trim() || 'gemini-2.0-flash'
+          provider: aiConfig.provider,
+          apiKey: aiConfig.apiKey,
+          model: aiConfig.model.trim(),
+          baseUrl: aiConfig.baseUrl
         })
       });
 
@@ -816,16 +927,21 @@ export default function App() {
         ? data.availableModels.filter((item: unknown): item is string => typeof item === 'string')
         : [];
 
-      setOpenAIConfig({
-        apiKey: openAIConfig.apiKey,
-        model: typeof data.model === 'string' && data.model ? data.model : openAIConfig.model,
+      setAIConfig((current) => ({
+        ...current,
+        model: typeof data.model === 'string' && data.model ? data.model : current.model,
+        baseUrl: typeof data.baseUrl === 'string' ? data.baseUrl : current.baseUrl,
         availableModels: nextModels,
-        isValid: Boolean(data.isValid)
-      });
+        isValid: Boolean(data.isValid),
+        hasServerKey: Boolean(data.hasServerKey)
+      }));
+      setModelsStatus(nextModels.length > 0
+        ? { state: 'loaded', message: `${nextModels.length} models available. Type to filter, or enter any model ID manually.` }
+        : { state: 'empty', message: 'No models were returned. You can still type a model ID manually.' });
       setConnectionMessage(data.message ?? (data.isValid ? 'Connection successful.' : 'Connection failed.'));
       setError('');
     } catch (err) {
-      setOpenAIConfig((current) => ({ ...current, isValid: false }));
+      setAIConfig((current) => ({ ...current, isValid: false }));
       setConnectionMessage(err instanceof Error ? err.message : 'The API key could not be validated.');
       setError(err instanceof Error ? err.message : 'The API key could not be validated.');
     } finally {
@@ -833,14 +949,14 @@ export default function App() {
     }
   };
 
-  const handlePromptOpenAI = async () => {
-    if (!openAIConfig.apiKey.trim()) {
+  const handlePromptAI = async () => {
+    if (!aiConfig.apiKey.trim() && !aiConfig.hasServerKey) {
       setError('Please enter an API key before sending a prompt.');
       return;
     }
 
     if (!promptText.trim()) {
-      setError('Please enter a prompt to send to the configured Gemini model.');
+      setError('Please enter a prompt to send to the configured model.');
       return;
     }
 
@@ -849,12 +965,14 @@ export default function App() {
     setPromptResponse('');
 
     try {
-      const response = await fetch(`${API_URL}/config/openai/prompt`, {
+      const response = await fetch(`${API_URL}/config/ai/prompt`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          apiKey: openAIConfig.apiKey,
-          model: openAIConfig.model.trim() || 'gemini-2.0-flash',
+          provider: aiConfig.provider,
+          apiKey: aiConfig.apiKey,
+          model: aiConfig.model.trim(),
+          baseUrl: aiConfig.baseUrl,
           prompt: promptText
         })
       });
@@ -862,12 +980,12 @@ export default function App() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error ?? 'Unable to run the Gemini prompt');
+        throw new Error(data.error ?? 'Unable to run the AI prompt');
       }
 
       setPromptResponse(typeof data.response === 'string' ? data.response : 'No response returned.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to run the Gemini prompt');
+      setError(err instanceof Error ? err.message : 'Unable to run the AI prompt');
     } finally {
       setIsPrompting(false);
     }
@@ -951,46 +1069,113 @@ export default function App() {
         </section>
 
         <section className="panel form-panel">
-          <h2>Gemini Configuration</h2>
+          <h2>AI Configuration</h2>
           <div className="project-form">
+            <div className="inline-grid">
+              <label>
+                AI Provider
+                <select
+                  value={aiConfig.provider}
+                  onChange={(event) => handleProviderChange(event.target.value as AIProviderId)}
+                >
+                  <option value="gemini">Google Gemini</option>
+                  <option value="openai">OpenAI (or any OpenAI-compatible API)</option>
+                </select>
+              </label>
+
+              <div className="model-lookup">
+                <div className="model-lookup-row">
+                  <label>
+                    Model
+                    <input
+                      value={aiConfig.model}
+                      onChange={(event) => setAIConfig({ ...aiConfig, model: event.target.value })}
+                      placeholder={aiConfig.provider === 'gemini' ? 'gemini-2.0-flash' : 'gpt-4o-mini'}
+                    />
+                  </label>
+
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => { void handleRefreshModels(); }}
+                    disabled={isValidatingKey || modelsStatus.state === 'loading'}
+                  >
+                    {modelsStatus.state === 'loading' ? 'Loading...' : 'Load models'}
+                  </button>
+                </div>
+
+                {modelsStatus.message ? (
+                  <p className={`model-status model-status-${modelsStatus.state}`}>{modelsStatus.message}</p>
+                ) : null}
+
+                {aiConfig.availableModels.length > 0 && modelsStatus.state !== 'error' ? (
+                  <div className="model-suggestions">
+                    {aiConfig.availableModels
+                      .filter((model) => model.toLowerCase().includes(aiConfig.model.trim().toLowerCase()))
+                      .slice(0, 60)
+                      .map((model) => (
+                        <button
+                          type="button"
+                          className="model-suggestion"
+                          key={model}
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => setAIConfig({ ...aiConfig, model })}
+                        >
+                          {model}
+                        </button>
+                      ))}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
             <label>
-              Gemini API Key
+              API Key
               <input
                 type="password"
-                value={openAIConfig.apiKey}
-                onChange={(event) => setOpenAIConfig({ ...openAIConfig, apiKey: event.target.value })}
-                placeholder="sk-..."
+                autoComplete="off"
+                value={aiConfig.apiKey}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  writeStoredAIKey(aiConfig.provider, value);
+                  setAIConfig((current) => ({ ...current, apiKey: value }));
+                }}
+                placeholder="Paste your API key"
               />
+              <span className="field-hint">
+                {aiConfig.provider === 'gemini' && aiConfig.hasServerKey && !aiConfig.apiKey.trim()
+                  ? 'No key needed here — the server has a default Gemini key configured.'
+                  : 'Kept only in this browser tab (session storage) and sent only with AI requests. Never saved on the server.'}
+              </span>
             </label>
 
-            <label>
-              Gemini Model
-              <input
-                list="gemini-model-options"
-                value={openAIConfig.model}
-                onChange={(event) => setOpenAIConfig({ ...openAIConfig, model: event.target.value })}
-                placeholder="gemini-2.0-flash"
-              />
-              <datalist id="gemini-model-options">
-                {openAIConfig.availableModels.length > 0 ? openAIConfig.availableModels.map((model) => (
-                  <option key={model} value={model} />
-                )) : null}
-              </datalist>
-            </label>
+            {aiConfig.provider === 'openai' ? (
+              <label>
+                Base URL (optional)
+                <input
+                  value={aiConfig.baseUrl}
+                  onChange={(event) => setAIConfig({ ...aiConfig, baseUrl: event.target.value })}
+                  placeholder="https://api.openai.com/v1"
+                />
+                <span className="field-hint">
+                  For OpenAI-compatible services such as OpenRouter, Groq or Mistral. Must be a public URL — internal and private network addresses are blocked.
+                </span>
+              </label>
+            ) : null}
 
             <div className="ai-config-actions">
-              <button type="button" className="primary-button" onClick={handleValidateOpenAIConfig} disabled={isBusy || isValidatingKey}>
-                {isValidatingKey ? 'Checking...' : 'Check Gemini Key'}
+              <button type="button" className="primary-button" onClick={handleValidateAIConfig} disabled={isBusy || isValidatingKey}>
+                {isValidatingKey ? 'Checking...' : 'Check Connection'}
               </button>
 
-              <button type="button" className="secondary-button" onClick={handleSaveOpenAIConfig} disabled={isBusy}>
-                {isBusy ? 'Saving...' : 'Save Gemini Settings'}
+              <button type="button" className="secondary-button" onClick={handleSaveAIConfig} disabled={isBusy}>
+                {isBusy ? 'Saving...' : 'Save Settings'}
               </button>
             </div>
 
-            <div className={`status-pill ${openAIConfig.isValid ? 'valid' : connectionMessage ? 'invalid' : ''}`}>
+            <div className={`status-pill ${aiConfig.isValid ? 'valid' : connectionMessage ? 'invalid' : ''}`}>
               <span className="status-dot" />
-              {openAIConfig.isValid ? 'Gemini key working' : connectionMessage ? 'Gemini key not working' : 'Not validated yet'}
+              {aiConfig.isValid ? 'Connection working' : connectionMessage ? 'Connection not working' : 'Not checked yet'}
             </div>
 
             {connectionMessage ? <p className="config-message">{connectionMessage}</p> : null}
@@ -998,7 +1183,7 @@ export default function App() {
         </section>
 
         <section className="panel form-panel">
-          <h2>Gemini Prompt</h2>
+          <h2>AI Prompt Test</h2>
           <div className="project-form">
             <label>
               Prompt
@@ -1006,12 +1191,12 @@ export default function App() {
                 rows={5}
                 value={promptText}
                 onChange={(event) => setPromptText(event.target.value)}
-                placeholder="Ask the configured Gemini model anything..."
+                placeholder="Ask the configured model anything..."
               />
             </label>
 
-            <button type="button" className="primary-button" onClick={handlePromptOpenAI} disabled={isBusy || isPrompting}>
-              {isPrompting ? 'Sending...' : 'Send Gemini Prompt'}
+            <button type="button" className="primary-button" onClick={handlePromptAI} disabled={isBusy || isPrompting}>
+              {isPrompting ? 'Sending...' : 'Send Prompt'}
             </button>
 
             {promptResponse ? (

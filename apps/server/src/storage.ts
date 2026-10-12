@@ -13,9 +13,10 @@ export const resolveServerDir = () => {
 const STORAGE_PATH = path.join(resolveServerDir(), 'data', 'projects.json');
 const SETTINGS_PATH = path.join(resolveServerDir(), 'data', 'settings.json');
 
-export type OpenAIConfig = {
-  apiKey: string;
+export type AIConfig = {
+  provider: 'gemini' | 'openai';
   model: string;
+  baseUrl: string;
   availableModels?: string[];
   isValid?: boolean;
 };
@@ -42,7 +43,7 @@ export function saveProjects(projects: unknown[]) {
   fs.writeFileSync(STORAGE_PATH, JSON.stringify(projects, null, 2), 'utf8');
 }
 
-export function loadSettings(): OpenAIConfig {
+export function loadSettings(): AIConfig {
   ensureStorage();
 
   try {
@@ -50,23 +51,28 @@ export function loadSettings(): OpenAIConfig {
     const parsed = JSON.parse(raw);
 
     return {
-      apiKey: typeof parsed?.apiKey === 'string' ? parsed.apiKey : '',
+      provider: parsed?.provider === 'openai' ? 'openai' : 'gemini',
       model: typeof parsed?.model === 'string' && parsed.model.trim() ? parsed.model : 'gemini-2.0-flash',
+      baseUrl: typeof parsed?.baseUrl === 'string' ? parsed.baseUrl.trim() : '',
       availableModels: Array.isArray(parsed?.availableModels)
         ? parsed.availableModels.filter((item: unknown): item is string => typeof item === 'string')
         : [],
       isValid: Boolean(parsed?.isValid)
     };
   } catch {
-    return { apiKey: '', model: 'gemini-2.0-flash', availableModels: [], isValid: false };
+    return { provider: 'gemini', model: 'gemini-2.0-flash', baseUrl: '', availableModels: [], isValid: false };
   }
 }
 
-export function saveSettings(settings: OpenAIConfig) {
+export function saveSettings(settings: AIConfig) {
   ensureStorage();
+
+  // API keys are intentionally never written to disk. Only non-secret
+  // preferences (provider, model, base URL, cached model list) are stored.
   fs.writeFileSync(SETTINGS_PATH, JSON.stringify({
-    apiKey: settings.apiKey ?? '',
+    provider: settings.provider === 'openai' ? 'openai' : 'gemini',
     model: settings.model ?? 'gemini-2.0-flash',
+    baseUrl: typeof settings.baseUrl === 'string' ? settings.baseUrl.trim() : '',
     availableModels: settings.availableModels ?? [],
     isValid: Boolean(settings.isValid)
   }, null, 2), 'utf8');
