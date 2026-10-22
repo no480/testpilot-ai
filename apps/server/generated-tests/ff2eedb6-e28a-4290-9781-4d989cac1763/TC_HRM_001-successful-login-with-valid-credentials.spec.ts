@@ -2,29 +2,53 @@ import { test, expect } from '@playwright/test';
 
 const projectName = "Tst HRM 2";
 const testData = {"username":"Admin","password":"admin123"};
+const baseUrl = process.env.BASE_URL ?? 'https://opensource-demo.orangehrmlive.com/web/index.php/auth/login';
 
-test('TC_HRM_001 - Successful Login with Valid Credentials', async ({ page }) => {
+test.use({
+  headless: false,
+  screenshot: 'only-on-failure',
+  video: 'retain-on-failure',
+  trace: 'retain-on-failure'
+});
+
+test('TC_HRM_001 - Successful Login with Valid Credentials', async ({ page }, testInfo) => {
   test.info().annotations.push({
     type: 'sourceTestCaseId',
     description: 'TC_HRM_001'
   });
 
-  await page.goto(process.env.BASE_URL ?? 'https://example.com');
-  await expect(page).toHaveURL(/.+/);
+  const captureFailureScreenshot = async (label: string) => {
+    const screenshotPath = testInfo.outputPath(label + '.png');
+    await page.screenshot({ path: screenshotPath, fullPage: true });
+    await testInfo.attach(label, { path: screenshotPath, contentType: 'image/png' });
+  };
 
-  const usernameField = page.getByLabel(/username|email/i).or(page.getByPlaceholder(/username|email/i));
-  const passwordField = page.getByLabel(/password/i).or(page.getByPlaceholder(/password/i));
-  const submitButton = page.getByRole('button', { name: /login|sign in/i }).or(page.getByRole('link', { name: /login|sign in/i }));
+  try {
+    // Open application
+    await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
+    // Validate page is loaded
+    await expect(page).toHaveURL(/.+/);
 
-  await usernameField.fill(testData.username);
-  await passwordField.fill(testData.password);
-  await submitButton.click();
+  const usernameField = page.locator('input[name="username"], input[name="txtUsername"], input[placeholder*="Username" i], input[type="text"]').first();
+  const passwordField = page.locator('input[name="password"], input[placeholder*="Password" i], input[type="password"]').first();
+  const submitButton = page.locator('button:has-text("Login"), button:has-text("Sign in"), button[type="submit"], input[type="submit"]').first();
 
-  await expect(
-    page.getByRole('heading', { name: /dashboard|welcome/i }).or(page.getByText(/welcome|dashboard/i))
-  ).toBeVisible();
+    // Fill in login credentials
+    await usernameField.fill(testData.username);
+    await passwordField.fill(testData.password);
 
-  // Source requirement: create atleast 15 testcases
-  // Scenario: Verify that the user can successfully log in to the OrangeHRM application using valid admin credentials.
-  // Expected result: User should be logged in successfully and redirected to the OrangeHRM dashboard page.
+    // Submit the login form
+    await submitButton.click();
+
+    // Verify dashboard is visible
+    const successIndicator = page.locator('body').locator('h1, h2, h6, span').filter({ hasText: /dashboard|welcome|home|profile/i }).first();
+    await expect(successIndicator).toBeVisible({ timeout: 15000 });
+
+    // Source requirement: create atleast 15 testcases
+    // Scenario: Verify that the user can successfully log in to the OrangeHRM application using valid admin credentials.
+    // Expected result: User should be logged in successfully and redirected to the OrangeHRM dashboard page.
+  } catch (error) {
+    await captureFailureScreenshot('failure-screenshot');
+    throw error;
+  }
 });

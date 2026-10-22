@@ -845,25 +845,28 @@ app.post('/api/projects/:projectId/run-tests', async (req, res) => {
       try {
         const { stdout, stderr } = await execAsync(fileCommand, {
           cwd: resolveServerDir(),
-          env: { ...process.env, BASE_URL: project.applicationUrl || 'https://example.com' }
+          env: { ...process.env, BASE_URL: project.applicationUrl || 'https://example.com' },
+          timeout: 120_000, // every file must reach a genuine terminal state within 2 minutes
+          maxBuffer: 10 * 1024 * 1024,
+          windowsHide: true
         });
 
         const nextOutput = `${stdout || ''}${stderr ? `\n${stderr}` : ''}`.trim();
         outputChunks.push(`## ${file.fileName}\n${nextOutput}`);
 
+        // execAsync only resolves on exit code 0, which for Playwright means every test passed.
         updateExecutionJob(project.id, (current) => ({
           ...current,
           output: outputChunks.join('\n\n'),
           status: 'running',
-          items: current.items.map((item) => item.id === file.id ? {
-            ...item,
-            status: nextOutput.includes('failed') || nextOutput.includes('Error') ? 'failed' : 'passed',
-            output: nextOutput || 'Test completed successfully.'
-          } : item)
+          items: current.items.map((item) => item.id === file.id ? { ...item, status: 'passed', output: nextOutput || 'Test completed successfully.' } : item)
         }));
       } catch (error) {
-        const err = error as { stdout?: string; stderr?: string; code?: number };
-        const nextOutput = `${err.stdout ?? ''}${err.stderr ? `\n${err.stderr}` : ''}`.trim() || 'Playwright execution failed.';
+        const err = error as { stdout?: string; stderr?: string; code?: number; killed?: boolean };
+        const baseOutput = `${err.stdout ?? ''}${err.stderr ? `\n${err.stderr}` : ''}`.trim() || 'Playwright execution failed.';
+        const nextOutput = err.killed
+          ? `TIMED OUT after 120s and was stopped.\n${baseOutput}`
+          : baseOutput;
         outputChunks.push(`## ${file.fileName}\n${nextOutput}`);
 
         updateExecutionJob(project.id, (current) => ({
@@ -910,10 +913,21 @@ app.post('/api/projects/:projectId/run-tests', async (req, res) => {
     };
 
     project.lastExecution = result;
-    const bundle = generateProjectReport(project, resolveServerDir());
-    project.reportSummary = bundle.rows;
-    project.reportPath = bundle.filePath;
-    persistProjects();
+
+    // Report generation and persistence must never block the job from finishing.
+    try {
+      const bundle = generateProjectReport(project, resolveServerDir());
+      project.reportSummary = bundle.rows;
+      project.reportPath = bundle.filePath;
+    } catch (reportError) {
+      console.error('[execution] Report generation failed:', reportError instanceof Error ? reportError.message : reportError);
+    }
+
+    try {
+      persistProjects();
+    } catch (persistError) {
+      console.error('[execution] Saving project state failed:', persistError instanceof Error ? persistError.message : persistError);
+    }
 
     executionJobs.set(project.id, {
       ...finalJob!,
@@ -923,7 +937,17 @@ app.post('/api/projects/:projectId/run-tests', async (req, res) => {
     });
   };
 
-  void runSequentially();
+  void runSequentially().catch((error) => {
+    const message = error instanceof Error ? error.message : 'Unknown execution error';
+    console.error('[execution] Run aborted unexpectedly:', message);
+    const current = executionJobs.get(project.id) ?? job;
+    executionJobs.set(project.id, {
+      ...current,
+      status: 'failed',
+      output: `${current.output}${current.output ? '\n' : ''}Execution aborted: ${message}`,
+      completedAt: new Date().toISOString()
+    });
+  });
 
   res.json({
     success: true,

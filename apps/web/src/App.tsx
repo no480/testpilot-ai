@@ -574,6 +574,7 @@ export default function App() {
       const jobId = data.jobId ?? 'current';
       let finalStatus = 'running';
       let finalOutput = '';
+      const pollStartedAt = Date.now();
 
       const pollStatus = async () => {
         const statusResponse = await fetch(`${API_URL}/projects/${selectedProject.id}/run-tests/status?jobId=${jobId}`);
@@ -597,6 +598,10 @@ export default function App() {
       };
 
       while (finalStatus === 'running') {
+        if (Date.now() - pollStartedAt > 15 * 60 * 1000) {
+          throw new Error('Test execution timed out after 15 minutes. Check the server logs and the execution output.');
+        }
+
         const done = await pollStatus();
         if (done) {
           break;
@@ -641,8 +646,15 @@ export default function App() {
         setActionNote('The testcase passed in Playwright. Next step: select the next testcase and continue with approval or generation.');
       }
     } catch (err) {
-      setActionNote('The run could not complete. Next step: confirm the testcase is selected and inspect the error before rerunning.');
-      setError(err instanceof Error ? err.message : 'Unable to run generated tests');
+      const message = err instanceof Error ? err.message : 'Unable to run generated tests';
+      // Never leave the execution panel stuck on "running": reset it to a clear failed state.
+      setExecutionStatus({
+        status: 'failed',
+        items: [],
+        output: `The run could not start or continue: ${message}`
+      });
+      setActionNote('The run could not complete. Next step: read the error above, fix it, then click Run Tests again.');
+      setError(message);
     } finally {
       setIsBusy(false);
     }
