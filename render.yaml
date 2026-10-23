@@ -18,7 +18,9 @@ services:
       - key: PLAYWRIGHT_HEADLESS
         value: true
       - key: ENABLE_TEST_EXECUTION
-        value: "false"
+        value: "true"
+      - key: EXECUTION_ACCESS_TOKEN
+        sync: false
       - key: NODE_VERSION
         value: "20"
 

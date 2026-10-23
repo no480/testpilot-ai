@@ -3,7 +3,7 @@ import dotenv from 'dotenv';
 import express from 'express';
 import { chromium } from 'playwright';
 import { exec } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -798,6 +798,31 @@ app.post('/api/projects/:projectId/run-tests', async (req, res) => {
       error: 'Test execution is disabled on this deployment. Set ENABLE_TEST_EXECUTION=true in the backend environment to allow it.'
     });
     return;
+  }
+
+  // Explicitly enabled deployments must authenticate executions with a shared
+  // token so anonymous visitors cannot drive the hosted browser runner.
+  if (process.env.ENABLE_TEST_EXECUTION === 'true') {
+    const expectedToken = (process.env.EXECUTION_ACCESS_TOKEN ?? '').trim();
+
+    if (!expectedToken) {
+      res.status(403).json({
+        error: 'Hosted execution is enabled but not configured: set EXECUTION_ACCESS_TOKEN in the backend environment, then send it as the x-execution-token header (or enter it in the Settings panel).'
+      });
+      return;
+    }
+
+    const providedToken = String(req.get('x-execution-token') ?? '').trim();
+    const providedBuffer = Buffer.from(providedToken);
+    const expectedBuffer = Buffer.from(expectedToken);
+    const tokenMatches = providedBuffer.length === expectedBuffer.length && timingSafeEqual(providedBuffer, expectedBuffer);
+
+    if (!tokenMatches) {
+      res.status(401).json({
+        error: 'A valid execution token is required. Enter the execution access token in the Settings panel to run tests on this hosted deployment.'
+      });
+      return;
+    }
   }
 
   const job = createExecutionJob(project);

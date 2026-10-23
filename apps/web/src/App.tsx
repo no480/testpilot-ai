@@ -126,6 +126,28 @@ const writeStoredAIKey = (provider: AIProviderId, key: string) => {
   }
 };
 
+const EXEC_TOKEN_STORAGE = 'testpilot-ai.exec-token';
+
+const readExecToken = (): string => {
+  try {
+    return window.sessionStorage.getItem(EXEC_TOKEN_STORAGE) ?? '';
+  } catch {
+    return '';
+  }
+};
+
+const writeExecToken = (value: string) => {
+  try {
+    if (value) {
+      window.sessionStorage.setItem(EXEC_TOKEN_STORAGE, value);
+    } else {
+      window.sessionStorage.removeItem(EXEC_TOKEN_STORAGE);
+    }
+  } catch {
+    // Ignore storage failures; the token still works for this page load.
+  }
+};
+
 type PlanningProgress = {
   status: 'idle' | 'exploring' | 'generating' | 'completed' | 'error';
   message: string;
@@ -175,6 +197,7 @@ export default function App() {
     hasServerKey: false
   });
   const [modelsStatus, setModelsStatus] = useState<ModelsStatus>({ state: 'idle', message: '' });
+  const [execToken, setExecToken] = useState(readExecToken());
   const [error, setError] = useState('');
   const [isBusy, setIsBusy] = useState(false);
   const [isValidatingKey, setIsValidatingKey] = useState(false);
@@ -564,7 +587,10 @@ export default function App() {
     setActionNote('Running each generated testcase one by one so the UI stays responsive and the execution status updates live.');
 
     try {
-      const response = await fetch(`${API_URL}/projects/${selectedProject.id}/run-tests`, { method: 'POST' });
+      const response = await fetch(`${API_URL}/projects/${selectedProject.id}/run-tests`, {
+        method: 'POST',
+        headers: execToken.trim() ? { 'x-execution-token': execToken.trim() } : {}
+      });
       const data = await response.json();
 
       if (!response.ok) {
@@ -1158,6 +1184,23 @@ export default function App() {
                 {aiConfig.provider === 'gemini' && aiConfig.hasServerKey && !aiConfig.apiKey.trim()
                   ? 'No key needed here — the server has a default Gemini key configured.'
                   : 'Kept only in this browser tab (session storage) and sent only with AI requests. Never saved on the server.'}
+              </span>
+            </label>
+
+            <label>
+              Execution Access Token (hosted runs)
+              <input
+                type="password"
+                autoComplete="off"
+                value={execToken}
+                onChange={(event) => {
+                  writeExecToken(event.target.value);
+                  setExecToken(event.target.value);
+                }}
+                placeholder="Only needed on the hosted site"
+              />
+              <span className="field-hint">
+                Owner-set secret that unlocks Run Tests on the hosted deployment. Kept only in this browser tab. Leave empty for local development.
               </span>
             </label>
 
