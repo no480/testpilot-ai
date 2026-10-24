@@ -199,9 +199,7 @@ export function generateProjectReport(project: ProjectLike, serverDir: string): 
           ? (latestCase ? toReportStatus(latestCase.status) : 'Not run')
           : project.lastExecution
             ? (project.lastExecution.success ? 'Passed' : 'Failed')
-            : (testCase.status ?? 'Draft') === 'Approved'
-              ? 'Passed'
-              : 'Skipped';
+            : 'Not run'; // never executed => never claim a pass
 
         const executedAt = latestCase?.executedAt ?? project.lastExecution?.generatedAt ?? new Date().toISOString();
         const output = latestCase?.output ?? project.lastExecution?.output ?? 'No execution output available yet.';

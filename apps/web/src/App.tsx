@@ -159,6 +159,8 @@ type PlanningProgress = {
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:4000/api';
 
+const PUBLIC_DEMO_PROJECT_ID = 'public-demo-project';
+
 const emptyForm = {
   name: '',
   applicationUrl: '',
@@ -562,6 +564,29 @@ export default function App() {
     } catch (err) {
       setActionNote('Generation did not complete. Next step: review the error, fix the testcase, and generate the script again.');
       setError(err instanceof Error ? err.message : 'Unable to generate Playwright tests');
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleOpenPublicDemo = async () => {
+    setIsBusy(true);
+    setError('');
+
+    try {
+      const response = await fetch(`${API_URL}/demo/prepare`, { method: 'POST' });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error ?? 'Unable to prepare the public demo');
+      }
+
+      const demoProject = data.project as Project;
+      setProjects((current) => [demoProject, ...current.filter((project) => project.id !== demoProject.id)]);
+      setSelectedProjectId(demoProject.id);
+      setActionNote('Public demo project selected — it uses a server-owned Playwright test on the OrangeHRM demo site. Click Run Tests to execute it live without any token.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to prepare the public demo');
     } finally {
       setIsBusy(false);
     }
@@ -1545,15 +1570,25 @@ export default function App() {
                 <>
                   <div className="panel-header">
                     <h3>Generated playright files</h3>
-                    <button type="button" className="primary-button" onClick={handleRunTests} disabled={isBusy}>
-                      Run Tests
-                    </button>
+                    <div className="ai-config-actions">
+                      <button type="button" className="secondary-button" onClick={handleOpenPublicDemo} disabled={isBusy}>
+                        Run Public Demo
+                      </button>
+                      <button type="button" className="primary-button" onClick={handleRunTests} disabled={isBusy}>
+                        Run Tests
+                      </button>
+                    </div>
                   </div>
                   <ul className="file-list">
                     {selectedProject.generatedFiles.map((file) => (
                       <li key={file.id}>{file.fileName}</li>
                     ))}
                   </ul>
+                  {selectedProject.id === PUBLIC_DEMO_PROJECT_ID ? (
+                    <p className="field-hint">Demo mode: server-owned OrangeHRM login test — real execution, no token required (rate-limited).</p>
+                  ) : (
+                    <p className="field-hint">Custom run: on the hosted site this requires your Execution Access Token (Settings). Local runs need no token.</p>
+                  )}
                 </>
               ) : (
                 <p>Approve at least one test case to generate Playwright scripts.</p>
