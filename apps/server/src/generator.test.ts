@@ -24,7 +24,7 @@ test('generatePlaywrightSpec creates executable Playwright test code with case m
 
   assert.match(generated, /test\('TC001 - Login with valid credentials'/);
   assert.match(generated, /sourceTestCaseId/);
-  assert.match(generated, /import\s+\{\s*allure\s*\}\s+from\s+'allure-playwright'/);
+  assert.match(generated, /submitButton/);
   assert.match(generated, /getByLabel|getByRole|page\.goto/);
   assert.match(generated, /expect\(/);
   assert.match(generated, /headless:\s*false/);

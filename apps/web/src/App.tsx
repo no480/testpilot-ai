@@ -148,6 +148,29 @@ const writeExecToken = (value: string) => {
   }
 };
 
+const copyToClipboard = async (text: string): Promise<boolean> => {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // Fallback: use a temporary textarea
+    try {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      const result = document.execCommand('copy');
+      document.body.removeChild(textarea);
+      return result;
+    } catch {
+      return false;
+    }
+  }
+};
+
 type PlanningProgress = {
   status: 'idle' | 'exploring' | 'generating' | 'completed' | 'error';
   message: string;
@@ -200,6 +223,7 @@ export default function App() {
   });
   const [modelsStatus, setModelsStatus] = useState<ModelsStatus>({ state: 'idle', message: '' });
   const [execToken, setExecToken] = useState(readExecToken());
+const [selectedGeneratedFileId, setSelectedGeneratedFileId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [isBusy, setIsBusy] = useState(false);
   const [isValidatingKey, setIsValidatingKey] = useState(false);
@@ -584,7 +608,7 @@ export default function App() {
       const demoProject = data.project as Project;
       setProjects((current) => [demoProject, ...current.filter((project) => project.id !== demoProject.id)]);
       setSelectedProjectId(demoProject.id);
-      setActionNote('Public demo project selected â€” it uses a server-owned Playwright test on the OrangeHRM demo site. Click Run Tests to execute it live without any token.');
+      setActionNote('Public demo project selected — it uses a server-owned Playwright test on the OrangeHRM demo site. Click Run Tests to execute it live without any token.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to prepare the public demo');
     } finally {
@@ -1207,7 +1231,7 @@ export default function App() {
               />
               <span className="field-hint">
                 {aiConfig.provider === 'gemini' && aiConfig.hasServerKey && !aiConfig.apiKey.trim()
-                  ? 'No key needed here â€” the server has a default Gemini key configured.'
+                  ? 'No key needed here — the server has a default Gemini key configured.'
                   : 'Kept only in this browser tab (session storage) and sent only with AI requests. Never saved on the server.'}
               </span>
             </label>
@@ -1238,7 +1262,7 @@ export default function App() {
                   placeholder="https://api.openai.com/v1"
                 />
                 <span className="field-hint">
-                  For OpenAI-compatible services such as OpenRouter, Groq or Mistral. Must be a public URL â€” internal and private network addresses are blocked.
+                  For OpenAI-compatible services such as OpenRouter, Groq or Mistral. Must be a public URL — internal and private network addresses are blocked.
                 </span>
               </label>
             ) : null}
@@ -1446,7 +1470,7 @@ export default function App() {
         {selectedCase && selectedProject ? (
           <section className="panel detail-panel">
             <div className="panel-header detail-header">
-              <h2>{selectedCase.testCaseId} â€” {selectedCase.title}</h2>
+              <h2>{selectedCase.testCaseId} — {selectedCase.title}</h2>
               <div className="inline-actions">
                 <button type="button" className="secondary-button" onClick={handleApproveCase} disabled={isBusy}>
                   {isBusy ? <span className="btn-spinner" /> : null}Approve
@@ -1569,25 +1593,111 @@ export default function App() {
               {selectedProject.generatedFiles.length > 0 ? (
                 <>
                   <div className="panel-header">
-                    <h3>Generated playright files</h3>
-                    <div className="ai-config-actions">
-                      <button type="button" className="secondary-button" onClick={handleOpenPublicDemo} disabled={isBusy}>
-                        Run Public Demo
-                      </button>
-                      <button type="button" className="primary-button" onClick={handleRunTests} disabled={isBusy}>
-                        Run Tests
-                      </button>
-                    </div>
+                    <h3>Generated Playwright scripts</h3>
                   </div>
-                  <ul className="file-list">
-                    {selectedProject.generatedFiles.map((file) => (
-                      <li key={file.id}>{file.fileName}</li>
-                    ))}
-                  </ul>
+                  <div className="file-selector">
+                    <ul className="file-list">
+                      {selectedProject.generatedFiles.map((file) => {
+                        const execItem = executionStatus.items.find((item) => item.id === file.id);
+                        const isSelected = selectedGeneratedFileId === file.id;
+                        return (
+                          <li
+                            key={file.id}
+                            className={execItem?.status ? `file-item ${execItem.status}` : ''}
+                            onClick={() => setSelectedGeneratedFileId(file.id)}
+                            title={file.fileName}
+                          >
+                            <span className="file-name">{file.fileName}</span>
+                            {execItem?.status ? (
+                              <span className={`status-badge ${execItem.status}`}>{execItem.status}</span>
+                            ) : null}
+                            {isSelected ? (
+                              <span className="status-badge selected">viewing</span>
+                            ) : null}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
                   {selectedProject.id === PUBLIC_DEMO_PROJECT_ID ? (
-                    <p className="field-hint">Demo mode: server-owned OrangeHRM login test â€” real execution, no token required (rate-limited).</p>
+                    <><div className="code-viewer-wrap">
+                      {selectedGeneratedFileId ? (
+                        <>
+                          <div className="code-viewer-header">
+                            <span className="code-file-name">
+                              {selectedProject.generatedFiles.find((f) => f.id === selectedGeneratedFileId)?.fileName ?? 'Unknown'}
+                            </span>
+                            <div className="code-actions">
+                              <button
+                                type="button"
+                                className="secondary-button"
+                                onClick={async () => {
+                                  const file = selectedProject.generatedFiles.find((f) => f.id === selectedGeneratedFileId);
+                                  if (file) {
+                                    const copied = await copyToClipboard(file.content);
+                                    setActionNote(copied ? 'Script copied to clipboard.' : 'Unable to copy script.');
+                                  }
+                                }}
+                                disabled={isBusy}
+                              >
+                                {isBusy ? <span className="btn-spinner" /> : null} Copy
+                              </button>
+                              <button
+                                type="button"
+                                className="secondary-button"
+                                onClick={() => {
+                                  const file = selectedProject.generatedFiles.find((f) => f.id === selectedGeneratedFileId);
+                                  if (file) {
+                                    const blob = new Blob([file.content], { type: 'text/typescript' });
+                                    const url = URL.createObjectURL(blob);
+                                    const a = document.createElement('a');
+                                    a.href = url;
+                                    a.download = file.fileName;
+                                    document.body.appendChild(a);
+                                    a.click();
+                                    document.body.removeChild(a);
+                                    URL.revokeObjectURL(url);
+                                  }
+                                }}
+                                disabled={isBusy}
+                              >
+                                Download .ts
+                              </button>
+                            </div>
+                          </div>
+                          <pre className="code-viewer">{selectedProject.generatedFiles.find((f) => f.id === selectedGeneratedFileId)?.content ?? ''}</pre>
+                        </>
+                      ) : (
+                        <div className="empty-code-viewer">Select a generated script above to view its Playwright source code.</div>
+                      )}
+                    </div>
+
+                    <div className="ai-config-actions">
+                      <button
+                        type="button"
+                        className="primary-button"
+                        onClick={handleRunTests}
+                        disabled={isBusy}
+                      >
+                        {isBusy ? <span className="btn-spinner" /> : null} Run Public Demo
+                      </button>
+                      <p className="field-hint">Server-owned OrangeHRM login test — real execution, no token required (rate-limited).</p>
+                    </div></>
                   ) : (
-                    <p className="field-hint">Custom run: on the hosted site this requires your Execution Access Token (Settings). Local runs need no token.</p>
+                    <><div className="ai-config-actions">
+                      <button
+                        type="button"
+                        className="primary-button"
+                        onClick={handleRunTests}
+                        disabled={isBusy || !execToken.trim()}
+                      >
+                        {isBusy ? <span className="btn-spinner" /> : null} Run Tests
+                      </button>
+                      <p className="field-hint">
+                        Custom execution requires your Execution Access Token (enter it in Settings). Local runs need no token.
+                        {!execToken.trim() ? 'Enter a token to enable Run Tests.' : ''}
+                      </p>
+                    </div></>
                   )}
                 </>
               ) : (
@@ -1752,3 +1862,6 @@ export default function App() {
     </div>
   );
 }
+
+
+
