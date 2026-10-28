@@ -996,6 +996,7 @@ app.post('/api/projects/:projectId/run-tests', async (req, res) => {
         output: `${current.output}${current.output ? '\n' : ''}Running ${file.fileName}...`,
         items: current.items.map((item) => item.id === file.id ? { ...item, status: 'running', output: 'Running Playwright test...' } : item)
       }));
+      const startTime = Date.now();
 
       try {
         const { stdout, stderr } = await execAsync(fileCommand, {

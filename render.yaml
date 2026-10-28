@@ -3,7 +3,7 @@ services:
     runtime: node
     name: testpilot-ai-api
     plan: free
-    buildCommand: npm ci --include=dev && npx playwright install --with-deps chromium || npx playwright install chromium; npm run build:server
+    buildCommand: npm ci --include=dev && ./node_modules/.bin/playwright install --with-deps chromium || ./node_modules/.bin/playwright install chromium; npm run build:server
     startCommand: npm run start
     healthCheckPath: /api/health
     envVars:
@@ -19,6 +19,8 @@ services:
         value: true
       - key: ENABLE_TEST_EXECUTION
         value: "true"
+      - key: PLAYWRIGHT_BROWSERS_PATH
+        value: /opt/render/.cache/ms-playwright
       - key: EXECUTION_ACCESS_TOKEN
         sync: false
       - key: NODE_VERSION
@@ -34,3 +36,4 @@ services:
         value: "20"
       - key: VITE_API_URL
         value: https://testpilot-ai-api.onrender.com/api
+

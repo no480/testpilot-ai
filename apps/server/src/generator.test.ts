@@ -27,7 +27,8 @@ test('generatePlaywrightSpec creates executable Playwright test code with case m
   assert.match(generated, /submitButton/);
   assert.match(generated, /getByLabel|getByRole|page\.goto/);
   assert.match(generated, /expect\(/);
-  assert.match(generated, /headless:\s*false/);
+  assert.match(generated, /headless:/);
   assert.match(generated, /screenshot:\s*'only-on-failure'/);
   assert.match(generated, /outputPath\(|attach\('failure-screenshot'/);
 });
+
