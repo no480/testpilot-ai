@@ -24,7 +24,7 @@ const testData = ${JSON.stringify(credentialData)};
 const baseUrl = process.env.BASE_URL ?? 'https://opensource-demo.orangehrmlive.com/web/index.php/auth/login';
 
 test.use({
-  headless: process.env.PLAYWRIGHT_HEADLESS !== false,
+  headless: process.env.PLAYWRIGHT_HEADLESS !== 'false',
   screenshot: 'only-on-failure',
   video: 'retain-on-failure',
   trace: 'retain-on-failure'
